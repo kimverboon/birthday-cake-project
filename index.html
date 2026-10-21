@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Birthday Cake 🎂</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1 id="mainTitle"></h1>
+      <p id="subTitle" aria-live="polite">Make a wish and blow out the candles.</p>
+      <div class="cake-stage" id="stage" role="button" tabindex="0">
+        <div class="cake" id="cake"></div>
+      </div>
+    </div>
+
+    <script>
+      // ---- URL params: ?name=Sam&candles=7 -------------------------------
+      const params = new URLSearchParams(window.location.search);
+      const name = (params.get("name") || "Maxie").trim().slice(0, 40) || "Maxie";
+      const candleCount = Math.min(Math.max(parseInt(params.get("candles"), 10) || 3, 1), 30);
+
+      // textContent (not innerHTML) so a crafted ?name= link can't inject HTML
+      document.getElementById("mainTitle").textContent = `Happy birthday, ${name}!`;
+      const subTitle = document.getElementById("subTitle");
+      const stage = document.getElementById("stage");
+      const cake = document.getElementById("cake");
+      stage.setAttribute(
+        "aria-label",
+        `Birthday cake with ${candleCount} candle${candleCount > 1 ? "s" : ""}. Press to blow them out.`
+      );
+
+      // ---- Candle placement ------------------------------------------------
+      // All numbers are in the cake's own px space (1 cake pixel = 5px).
+      const CELL = 5;
+      const CANDLE_SCALE = 0.2;               // keep in sync with .candle { transform: scale(0.2) }
+      const ANCHOR_X = 47.5 * CANDLE_SCALE;   // candle art: bottom-centre of the candle...
+      const ANCHOR_Y = 90 * CANDLE_SCALE;     // ...inside its 65 x 90 art box
+      const CAKE_CENTER_X = 14 * CELL;        // middle of the cake body (cells 6-21)
+      const FIRST_ROW_Y = 11 * CELL;          // where the first row of candles stands (on the frosting)
+      const ROW_GAP = CELL;                   // each extra row sits one cake pixel lower
+      const SPACING = 9;                      // gap between candle centres
+      const PER_ROW = 6;
+
+      function createCandles(count) {
+        cake.innerHTML = "";
+        for (let i = 0; i < count; i++) {
+          const row = Math.floor(i / PER_ROW);
+          const col = i % PER_ROW;
+          const inRow = Math.min(PER_ROW, count - row * PER_ROW);
+          const stagger = row % 2 ? SPACING / 2 : 0; // odd rows shift half a step
+
+          const cx = CAKE_CENTER_X + (col - (inRow - 1) / 2) * SPACING + stagger;
+          const by = FIRST_ROW_Y + row * ROW_GAP;
+
+          const candle = document.createElement("div");
+          candle.className = "candle";
+          // whole px so every candle pixel lands on the screen pixel grid (stays crisp)
+          candle.style.left = `${Math.round(cx - ANCHOR_X)}px`;
+          candle.style.top = `${Math.round(by - ANCHOR_Y)}px`;
+          // desync the flicker a little so they don't all pulse together
+          candle.style.animationDelay = `${-Math.random() * 0.9}s`;
+          cake.appendChild(candle);
+        }
+      }
+      createCandles(candleCount);
+
+      // ---- Blowing out ------------------------------------------------------
+      let blown = false;
+      let micStream = null;
+      let audioContext = null;
+
+      function blowOutCandles() {
+        if (blown) return;
+        blown = true;
+        document.querySelectorAll(".candle").forEach((candle) => {
+          setTimeout(() => candle.classList.add("blown"), Math.random() * 1000);
+        });
+        setTimeout(() => {
+          subTitle.textContent = "Yayy, wishing you a joyeux anniversaire! I love you 🎉";
+        }, 1200);
+        // done listening: release the mic so the browser's recording indicator turns off
+        if (micStream) micStream.getTracks().forEach((t) => t.stop());
+        if (audioContext) audioContext.close();
+      }
+
+      // Fallback for no mic / permission denied: click, tap, Space or Enter
+      stage.addEventListener("click", blowOutCandles);
+      stage.addEventListener("keydown", (e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          blowOutCandles();
+        }
+      });
+
+      // ---- Microphone / blow detection -------------------------------------
+      // A blow is loud, broadband noise, so the high half of the spectrum is
+      // strong relative to the low half. Tune these two if needed:
+      const BLOW_RATIO_THRESHOLD = 0.5; // lower = more sensitive (tutorial value)
+      const MIN_LOW_LEVEL = 30;         // 0-255; ignore near-silence. Raise if candles go out on their own
+
+      async function startMicDetection() {
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({
+            // noise suppression / auto-gain would treat a blow as wind noise and squash it
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          });
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioContext.state === "suspended") await audioContext.resume();
+
+          const source = audioContext.createMediaStreamSource(micStream);
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const half = dataArray.length / 2;
+
+          function detectBlow() {
+            if (blown) return;
+            analyser.getByteFrequencyData(dataArray);
+
+            let lowSum = 0;
+            let highSum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              if (i < half) lowSum += dataArray[i];
+              else highSum += dataArray[i];
+            }
+            const lowAvg = lowSum / half;
+            const highAvg = highSum / half;
+            const ratio = highAvg / (lowAvg + 1);
+
+            if (lowAvg > MIN_LOW_LEVEL && ratio > BLOW_RATIO_THRESHOLD) {
+              blowOutCandles();
+              return;
+            }
+            requestAnimationFrame(detectBlow);
+          }
+          detectBlow();
+        } catch (err) {
+          console.error("Mic access error:", err);
+          subTitle.textContent = "No microphone? Tap the cake to blow out the candles.";
+        }
+      }
+
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        startMicDetection();
+      } else {
+        subTitle.textContent = "No microphone? Tap the cake to blow out the candles.";
+      }
+    </script>
+  </body>
+</html>
