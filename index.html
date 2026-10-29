@@ -24,8 +24,8 @@
     <script>
       // ---- URL params: ?name=Sam&candles=7 -------------------------------
       const params = new URLSearchParams(window.location.search);
-      const name = (params.get("name") || "Maxie").trim().slice(0, 40) || "Maxie";
-      const candleCount = Math.min(Math.max(parseInt(params.get("candles"), 10) || 3, 1), 30);
+      const name = (params.get("name") || " Maxie").trim().slice(0, 40) || " Maxie";
+      const candleCount = Math.min(Math.max(parseInt(params.get("candles"), 10) || 5, 1), 30);
 
       // textContent (not innerHTML) so a crafted ?name= link can't inject HTML
       document.getElementById("mainTitle").textContent = `Happy birthday, ${name}!`;
